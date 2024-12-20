@@ -1,16 +1,18 @@
 from dotenv import load_dotenv
 import os
+import requests
 from flask import Flask, request, jsonify
 from twilio.rest import Client
 import openai
 from langdetect import detect
+from unidecode import unidecode
 
 # Load environment variables from .env
 dotenv_path = r'C:\Users\flavi\GitHub\Chatbot\.env'
 load_dotenv(dotenv_path=dotenv_path)
 
 # Verify if environment variables are loaded
-required_env_vars = ["OPENAI_API_KEY", "TWILIO_SID", "TWILIO_AUTH_TOKEN"]
+required_env_vars = ["OPENAI_API_KEY", "TWILIO_SID", "TWILIO_AUTH_TOKEN", "OPENWEATHER_API_KEY"]
 if all([os.getenv(var) for var in required_env_vars]):
     print("Environment variables loaded successfully.")
 else:
@@ -22,12 +24,33 @@ TWILIO_SID = os.getenv("TWILIO_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 FROM_WHATSAPP = os.getenv("TWILIO_FROM_WHATSAPP")
 TO_WHATSAPP = os.getenv("TWILIO_TO_WHATSAPP")
+OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
 # Initialize the Twilio client
 twilio_client = Client(TWILIO_SID, TWILIO_AUTH_TOKEN)
 
 # Configure Flask application
 app = Flask(__name__)
+
+# Function to fetch weather data from OpenWeatherMap API
+def fetch_weather(city_name):
+    url = f"http://api.openweathermap.org/data/2.5/weather"
+    params = {
+        "q": city_name,
+        "appid": OPENWEATHER_API_KEY,
+        "units": "metric",
+        "lang": "en"
+    }
+    response = requests.get(url, params=params)
+    if response.status_code == 200:
+        data = response.json()
+        return {
+            "temperature": data["main"]["temp"],
+            "description": data["weather"][0]["description"],
+            "city": data["name"]
+        }
+    else:
+        return None
 
 # Function to generate ChatGPT response including lore
 def generate_chatgpt_response(message):
@@ -56,21 +79,33 @@ def sms_reply():
     received_message = request.form.get("Body")
     sender_number = request.form.get("From")
 
-    try:
-        # Detect language
-        detected_language = detect(received_message)
-    except:
-        detected_language = "unknown"
-
-    if detected_language != "en":
-        response_message = "Sorry, I can only respond to messages in English."
-    elif not received_message or len(received_message.strip()) == 0:
+    if not received_message or len(received_message.strip()) == 0:
         response_message = "Please send a valid message so I can assist you!"
     elif len(received_message) > 200:
         response_message = "Your message is too long! Please limit it to 200 characters."
+    elif "weather in" in received_message.lower():
+        # Extract city name from the message and normalize
+        city_name = received_message.lower().split("weather in")[-1].strip()
+        city_name = unidecode(city_name)
+        weather_data = fetch_weather(city_name)
+        if weather_data:
+            response_message = (
+                f"The current weather in {weather_data['city']} is {weather_data['temperature']}°C "
+                f"with {weather_data['description']}.")
+        else:
+            response_message = "I couldn't fetch the weather information. Please check the city name and try again."
     else:
-        # Generate response if input is valid
-        response_message = generate_chatgpt_response(received_message)
+        try:
+            # Detect language for non-weather queries
+            detected_language = detect(received_message)
+        except:
+            detected_language = "unknown"
+
+        if detected_language != "en":
+            response_message = "Sorry, I can only respond to messages in English."
+        else:
+            # Generate response if input is valid
+            response_message = generate_chatgpt_response(received_message)
 
     # Send the response back via Twilio
     twilio_client.messages.create(
