@@ -52,6 +52,20 @@ def fetch_weather(city_name):
     else:
         return None
 
+# Function to provide plant care tips based on weather
+def get_plant_care_tips(weather_description):
+    tips = {
+        "clear sky": "With clear skies, ensure your plants have enough water, especially during hot days. Morning watering is ideal.",
+        "rain": "Rainy weather is great, but make sure your pots have good drainage to avoid root rot.",
+        "snow": "Snow can harm sensitive plants. Consider covering them or bringing potted plants indoors.",
+        "clouds": "Cloudy weather reduces sunlight. Ensure your plants are getting adequate light indoors if needed.",
+        "thunderstorm": "Strong winds and heavy rain can damage plants. Secure outdoor plants and check for waterlogging."
+    }
+    for key, tip in tips.items():
+        if key in weather_description.lower():
+            return tip
+    return "Keep an eye on your plants and adjust care based on the weather conditions."
+
 # Function to generate ChatGPT response including lore
 def generate_chatgpt_response(message):
     prompt = f"Please provide a courteous answer to the question: {message}"
@@ -73,6 +87,13 @@ def generate_chatgpt_response(message):
     )
     return response['choices'][0]['message']['content']
 
+# Function to handle city not found scenario
+def handle_city_not_found(city_name):
+    return (
+        f"I couldn't find the weather information for '{city_name}'. "
+        "Could you try providing the city name along with the country? For example: 'São Paulo, Brazil'."
+    )
+
 # Route to handle incoming messages via Twilio
 @app.route("/sms", methods=["POST"])
 def sms_reply():
@@ -86,14 +107,19 @@ def sms_reply():
     elif "weather in" in received_message.lower():
         # Extract city name from the message and normalize
         city_name = received_message.lower().split("weather in")[-1].strip()
-        city_name = unidecode(city_name)
         weather_data = fetch_weather(city_name)
+        if not weather_data:
+            # Retry without unidecode normalization
+            weather_data = fetch_weather(received_message.split("weather in")[-1].strip())
+
         if weather_data:
+            plant_care_tip = get_plant_care_tips(weather_data['description'])
             response_message = (
-                f"The current weather in {weather_data['city']} is {weather_data['temperature']}°C "
-                f"with {weather_data['description']}.")
+                f"The current weather in {weather_data['city']} is {weather_data['temperature']}°C with {weather_data['description']}\n\n"
+                f"Plant Care Tip:\n- {plant_care_tip}"
+            )
         else:
-            response_message = "I couldn't fetch the weather information. Please check the city name and try again."
+            response_message = handle_city_not_found(city_name)
     else:
         try:
             # Detect language for non-weather queries
